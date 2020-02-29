@@ -32,6 +32,8 @@ export default function withApollo(
     apolloState,
     ...pageProps
   }: InitialProps) => {
+    // On server, this is the second time instantiation of apollo clinet
+    // on a single request, only to provide data from cached state.
     const client = apolloClient || initApolloClient(apolloState)
     return (
       <ApolloProvider client={client}>
@@ -56,9 +58,9 @@ export default function withApollo(
     WithApollo.getInitialProps = async (ctx: WithApolloPageContext) => {
       const { AppTree } = ctx
 
-      // Initialize ApolloClient, add it to the ctx object so
+      // Initialize ApolloClient with ctx, add it to the ctx object so
       // we can use it in `PageComponent.getInitialProp`.
-      const apolloClient = (ctx.apolloClient = initApolloClient())
+      const apolloClient = (ctx.apolloClient = initApolloClient(undefined, ctx))
 
       // Run wrapped getInitialProps methods
       let pageProps = {}
@@ -118,11 +120,11 @@ export default function withApollo(
  * Creates or reuses apollo client in the browser.
  * @param  {Object} initialState
  */
-function initApolloClient(initialState?: any) {
+function initApolloClient(initialState?: any, ctx?: NextPageContext) {
   // Make sure to create a new client for every server-side request so that data
   // isn't shared between connections (which would be bad)
   if (typeof window === 'undefined') {
-    return createApolloClient(initialState)
+    return createApolloClient(initialState, ctx)
   }
 
   // Reuse client on the client-side
@@ -137,23 +139,26 @@ function initApolloClient(initialState?: any) {
  * Creates and configures the ApolloClient
  * @param  {Object} [initialState={}]
  */
-function createApolloClient(initialState = {}) {
+function createApolloClient(initialState = {}, ctx?: NextPageContext) {
   const ssrMode = typeof window === 'undefined'
   const cache = new InMemoryCache().restore(initialState)
 
   // Check out https://github.com/zeit/next.js/pull/4611 if you want to use the AWSAppSyncClient
   return new ApolloClient({
     ssrMode,
-    link: createIsomorphLink(),
+    link: createIsomorphLink(ctx),
     cache,
   })
 }
 
-function createIsomorphLink() {
+function createIsomorphLink(ctx?: NextPageContext) {
   if (typeof window === 'undefined') {
     const { SchemaLink } = require('apollo-link-schema')
     const schema = require('./schema').default
-    return new SchemaLink({ schema })
+    const createGraphqlContext = require("./create-resolver-context").default
+
+    const context = ctx ? createGraphqlContext(ctx) : undefined
+    return new SchemaLink({ schema, context })
   } else {
     const { HttpLink } = require('apollo-link-http')
     return new HttpLink({
